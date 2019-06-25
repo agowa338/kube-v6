@@ -40,7 +40,9 @@ if [ ! -f "/etc/kubernetes/admin.conf" ]; then
   echo "Initiate kubeadm"
   sudo kubeadm config images pull
   sudo kubeadm init --apiserver-advertise-address=${base_ip6}0::$self_id \
-    --service-cidr=$k8s_service_cidr:/110 --node-name=k86-master --token=$KUBEADM_TOKEN | tee /vagrant/config/cert
+    --service-cidr=$k8s_service_cidr:/110 --node-name=k86-master --token=$KUBEADM_TOKEN
+  sudo kubeadm token create --print-join-command > /vagrant/config/join.sh
+  sudo chmod a+x /vagrant/config/join.sh
 fi
 
 echo "kubectl config for user $(id -u)"
