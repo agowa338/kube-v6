@@ -13,54 +13,18 @@ nat64_prefix=$K8S_NAT64_PREFIX
 echo "Installing required packages"
 sudo apt-get install -y build-essential linux-headers-$(uname -r) dkms \
 	gcc make pkg-config libnl-genl-3-dev autoconf \
-		bind9 iptables-dev
+		bind9 iptables-dev tayga
 
-if [ ! -d "/home/vagrant/Jool" ]; then
-	echo "Downloading Jool"
-	git clone https://github.com/NICMx/Jool.git /home/vagrant/Jool.tmp
-	mv /home/vagrant/Jool.tmp /home/vagrant/Jool
-fi
-
-if [ "$(sudo dkms status | grep "^jool")" = "" ]; then
-	echo "Installing Jool kernel modules"
-	( cd /home/vagrant/ && sudo dkms install Jool )
-fi
-
-echo "Compiling and installing Jool's user binaries"
-sudo chown -R vagrant:vagrant /home/vagrant/Jool
-( cd /home/vagrant/Jool && ./autogen.sh && ./configure )
-make -C /home/vagrant/Jool
-sudo make install -C /home/vagrant/Jool
-
-echo "Configuring Jool"
+echo "Configuring systemd unit"
 sudo tee /etc/systemd/system/nat64.service << EOF
 [Unit]
-Description=Jool NAT64
+Description=Tayga NAT64
 After=network.target
-
 [Service]
-ExecStart=/root/nat64-setup.sh
-
+ExecStart=/usr/sbin/tayga --nodetach -d
 [Install]
 WantedBy=default.target
 EOF
-
-sudo tee /root/nat64-setup.sh << EOF
-#!/bin/bash
-modprobe jool pool6=$nat64_prefix/96 disabled
-ip4_address=\$(ip -o addr show dev enp0s3 | sed 's,/, ,g' | awk '\$3=="inet" { print $4 }')
-
-jool -4 --add $ip4_address 7000-8000
-jool -4 -d
-jool -6 -d
-jool --enable
-#jool -d
-EOF
-
-sudo chmod a+x /root/nat64-setup.sh
-
-sudo systemctl start nat64.service
-sudo systemctl enable nat64.service
 
 echo "Configuring bind"
 cat | sudo tee /etc/bind/named.conf.options << EOF
@@ -82,3 +46,28 @@ EOF
 
 sudo service bind9 restart
 systemctl status bind9
+
+
+cat | sudo tee /etc/tayga.conf << EOF
+tun-device nat64
+ipv4-addr 192.168.255.1
+ipv6-addr 2001:db8::2
+prefix 64:ff9b::/96
+dynamic-pool 192.168.255.0/24
+data-dir /var/spool/tayga
+EOF
+
+sudo tayga --mktun                                # Create virtual tunnel interface
+sudo ip link set nat64 up                         # Activate tunnel interface
+
+sudo ip addr add 192.168.255.1 dev nat64          # Give our selve an address within the ipv4 address pool for iptables
+sudo ip addr add 2001:db8::1/126 dev nat64        # Transfer network between us and tayga
+sudo ip route add 192.168.255.0/24 dev nat64      # the replacement address pool tayga uses as source address
+sudo ip route add 64:ff9b::/96 via 2001:db8::2    # Route 64:ff9b::/96 via tayga
+
+sudo systemctl start nat64                        # start tayga
+
+# Statefull NAT ipv4 requests from NAT64 interface onto public facing interface
+sudo iptables -t nat -A POSTROUTING -s 192.168.255.0/24 -j SNAT --to-source "172.17.0.1"
+sudo iptables -t filter -A FORWARD -s 192.168.255.0/24 -i nat64 -j ACCEPT
+sudo iptables -t filter -A FORWARD -d 192.168.255.0/24 -o nat64 -j ACCEPT
