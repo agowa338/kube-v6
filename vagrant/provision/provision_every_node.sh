@@ -152,6 +152,7 @@ sudo modprobe overlay
 
 sudo tee /etc/docker/daemon.json << EOF
 {
+  "exec-opts": ["native.cgroupdriver=systemd"],
   "storage-driver": "overlay2",
   "ipv6": true,
   "fixed-cidr-v6" : "fd00:dead::/110"
@@ -164,3 +165,6 @@ sudo systemctl start docker
 #Disable swap
 sudo swapoff -a
 sudo sed -e '/swap/ s/^#*/#/' -i /etc/fstab
+
+# Add bash completion
+kubectl completion bash | sudo tee /etc/bash_completion.d/kubectl > /dev/null
